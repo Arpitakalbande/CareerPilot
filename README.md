@@ -7,7 +7,7 @@ A comprehensive AI-powered job search platform with LangGraph agents, resume ana
 
 - **Resume Analysis Pro**: Detailed ATS scoring with 8 granular subscores (skills, experience, education, certifications, projects, impact, formatting, keyword coverage)
 - **Job Search & Ranking**: Search and scrape jobs from Indeed, Naukri, and SerpApi with AI-powered ranking
-- **AI Recruiter Interview**: Voice-enabled recruiter chatbot with real-time performance analysis
+- **AI Recruiter Interview**: Voice-enabled recruiter chatbot with local Whisper STT + browser TTS and real-time performance analysis
 - **Interview Prep**: AI-generated interview Q&A with robust JSON parsing and batching
 - **Cover Letter Generator**: Auto-generate professional cover letters with your resume links (LinkedIn, GitHub, Portfolio)
 - **Email Application**: Send tailored application emails with resume attachment and auto-extracted profile links
@@ -31,7 +31,8 @@ A comprehensive AI-powered job search platform with LangGraph agents, resume ana
 - Tailwind CSS (styling)
 - shadcn/ui (component library)
 - Recharts (data visualization)
-- Web Speech API (voice recognition)
+- MediaRecorder + backend Whisper STT
+- Browser SpeechSynthesis (TTS)
 
 **Infrastructure:**
 - Python 3.11+
@@ -134,6 +135,7 @@ INFO:     Application startup complete
 **Interview:**
 - `POST /api/v1/generate-interview-qa` - Generate interview questions
 - `POST /api/v1/recruiter/chat` - Chat with AI recruiter
+- `POST /api/v1/recruiter/transcribe` - Transcribe recruiter voice input using local Whisper
 - `POST /api/v1/interview/analyze` - Analyze completed interview and get performance score
 
 **Cover Letter & Email:**
@@ -204,7 +206,8 @@ The React frontend includes 6 main sections:
 4. **AI Recruiter Chat**
    - Voice-enabled interview simulation
    - Real-time recruiter questions
-   - Speak naturally (browser speech recognition)
+  - Speak naturally with local Whisper speech-to-text (backend transcription)
+  - AI responses played with browser text-to-speech
    - End interview to see performance analysis
    - Get score (0-100), strengths, improvements, and feedback
 
@@ -336,6 +339,9 @@ SERPER_API_KEY=...
 # Model Configuration
 MODEL_NAME=claude-3-sonnet-20241022
 EMBEDDINGS_MODEL=sentence-transformers/all-MiniLM-L6-v2
+LOCAL_WHISPER_MODEL_SIZE=base
+LOCAL_WHISPER_DEVICE=cpu
+LOCAL_WHISPER_COMPUTE_TYPE=int8
 
 # Job Scraper
 MAX_JOBS_PER_SCRAPE=20
@@ -467,8 +473,10 @@ Then open: http://localhost:5173
 **Issue:** API calls fail (CORS)
 - Solution: Backend must be running on http://127.0.0.1:8000
 
-**Issue:** Voice recognition not working
-- Solution: Use Chrome/Brave browser (Safari/Firefox support limited)
+**Issue:** Voice transcription not working in Recruiter Chat
+- Solution: Confirm backend is running and `/api/v1/recruiter/transcribe` is reachable
+- Solution: Verify local Whisper dependencies are installed: `pip install -r requirements.txt`
+- Solution: Try a smaller local model in `.env` (for low-memory systems): `LOCAL_WHISPER_MODEL_SIZE=tiny`
 
 ---
 
@@ -502,7 +510,7 @@ Then open: http://localhost:5173
 ### Recruiter Chat
 - **Input:** Message, conversation history, resume, job description
 - **Output:** AI recruiter response (concise questions)
-- **Voice:** Browser speech recognition + synthesis
+- **Voice:** Local Whisper STT (`/api/v1/recruiter/transcribe`) + browser TTS synthesis
 
 ### Email
 - **Input:** To address, subject, resume PDF, role, company

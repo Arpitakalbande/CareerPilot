@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str
     MODEL_NAME: str = "claude-opus-4-1-20250805"
     TEMPERATURE: float = 0.7
+    LOCAL_WHISPER_MODEL_SIZE: str = "base"
+    LOCAL_WHISPER_DEVICE: str = "cpu"
+    LOCAL_WHISPER_COMPUTE_TYPE: str = "int8"
     
     EMAIL_SENDER: str
     EMAIL_PASSWORD: str
@@ -33,6 +36,10 @@ class Settings(BaseSettings):
     # Scraping API (SerpApi) - optional fallback for sites that block scraping
     SERPAPI_API_KEY: Optional[str] = None
     SCRAPING_PROVIDER: str = "auto"
+    # LinkedIn scraping (authenticated)
+    LINKEDIN_ENABLED: bool = False
+    LINKEDIN_LI_AT: Optional[str] = None
+    LINKEDIN_USER_AGENT: Optional[str] = None
     
     # Resume Settings
     RESUME_MIN_SCORE: float = 0.5

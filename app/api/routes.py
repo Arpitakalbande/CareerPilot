@@ -1,64 +1,51 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Body, Form
 from typing import Optional, List, Literal
 import os, json, logging, smtplib, ssl, re, textwrap
+import tempfile
+from pathlib import Path
 from pydantic import BaseModel, EmailStr
-
-# AI / Resume Modules
+from threading import Lock
 from modules.resume_text_extractor import extract_text_from_pdf
 from modules.resume_ats import ResumeAgent
 from modules.job_scraper import JobScraper
 from modules.interview_qa import InterviewQAGenerator
 from modules.cover_letter import extract_resume_text, create_cover_letter, extract_candidate_info
 from modules.gmail_sender import send_gmail, send_gmail_with_attachment
-from agents.supervisor_agent import JobSearchSupervisor
 from agents.job_search_agent import JobSearchAgent
 from agents.application_workflow import create_application_graph, ApplicationState
 from langgraph.checkpoint.memory import MemorySaver
+from anthropic import AsyncAnthropic
+from app.config import get_settings
 
-# Schemas
 from app.api.schemas import (
     ResumeAnalysisResponse, JobPosting, JobSearchInput, JobSearchResponse,
     InterviewQAInput, InterviewQAResponse, WorkflowOutput
 )
 
-# Anthropic Client (NEW)
-from anthropic import AsyncAnthropic
-from app.config import get_settings
-
 
 settings = get_settings()
 anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+_whisper_model = None
+_whisper_lock = Lock()
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["job-search-ai"])
 
 memory = MemorySaver()
-supervisor = None  
 resume_ats = ResumeAgent()
 job_scraper = JobScraper()
 job_agent = JobSearchAgent()
 interview_qa = InterviewQAGenerator()
 
 
-def get_supervisor():
-    global supervisor
-    if supervisor is None:
-        supervisor = JobSearchSupervisor()
-    return supervisor
-
-
-# ─────────────────────────────────────────────
-# HEALTH CHECK
-# ─────────────────────────────────────────────
 @router.get("/health")
 async def health_check():
     return {"status": "healthy", "version": settings.API_VERSION}
 
 
 
-# ─────────────────────────────────────────────
-# 📄 Resume ATS Analyzer
-# ─────────────────────────────────────────────
+
 @router.post("/analyze-resume")
 async def analyze_resume(file: UploadFile = File(...), job_description: str = Form("")):
     try:
@@ -75,9 +62,6 @@ async def analyze_resume(file: UploadFile = File(...), job_description: str = Fo
 
 
 
-# ─────────────────────────────────────────────
-# 🔍 Job Search + Ranking
-# ─────────────────────────────────────────────
 @router.post("/search-jobs", response_model=JobSearchResponse)
 async def search_jobs(search_input: JobSearchInput, resume_skills: Optional[List[str]] = None):
     try:
@@ -86,7 +70,8 @@ async def search_jobs(search_input: JobSearchInput, resume_skills: Optional[List
             location=search_input.location,
             salary_min=search_input.salary_min,
             salary_max=search_input.salary_max,
-            job_type=search_input.job_type
+            job_type=search_input.job_type,
+            platforms=search_input.platforms,
         )
 
         jobs = scraped or []
@@ -260,6 +245,68 @@ class InterviewAnalysisRequest(BaseModel):
     conversation: str
     role: str
     company: str
+
+
+def get_local_whisper_model():
+    """Lazily initialize local Faster-Whisper model."""
+    global _whisper_model
+    if _whisper_model is not None:
+        return _whisper_model
+
+    with _whisper_lock:
+        if _whisper_model is not None:
+            return _whisper_model
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as e:
+            raise HTTPException(
+                status_code=500,
+                detail="Local Whisper dependency missing. Install 'faster-whisper'.",
+            ) from e
+
+        _whisper_model = WhisperModel(
+            settings.LOCAL_WHISPER_MODEL_SIZE,
+            device=settings.LOCAL_WHISPER_DEVICE,
+            compute_type=settings.LOCAL_WHISPER_COMPUTE_TYPE,
+        )
+        return _whisper_model
+
+
+@router.post("/recruiter/transcribe")
+async def recruiter_transcribe(audio: UploadFile = File(...), language: str = Form("en")):
+    """Transcribe recruiter chat audio using local Faster-Whisper STT."""
+    tmp_path: Optional[str] = None
+
+    try:
+        model = get_local_whisper_model()
+        audio_bytes = await audio.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Empty audio upload")
+
+        suffix = Path(audio.filename or "speech.webm").suffix or ".webm"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        segments, _ = model.transcribe(
+            tmp_path,
+            language=language or None,
+            vad_filter=True,
+            beam_size=5,
+        )
+        text = " ".join(seg.text.strip() for seg in segments if seg.text).strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="No speech detected in audio")
+
+        return {"text": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Whisper transcription error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to transcribe audio")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 @router.post("/recruiter/chat")

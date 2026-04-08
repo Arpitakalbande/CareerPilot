@@ -3,7 +3,7 @@
 🎤 Speech → Text   + 🔊 AI Speaks Answers
 ***********************************************************************************************/
 import { useState, useRef } from "react";
-import { recruiterChatAPI } from "@/api/recruiter";
+import { recruiterChatAPI, recruiterTranscribeAPI } from "@/api/recruiter";
 
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,7 +29,9 @@ export default function RecruiterChatSection() {
   const [loading, setLoading] = useState(false);
 
   const [listening, setListening] = useState(false);
-  const recognitionRef = useRef<any | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const [interviewResult, setInterviewResult] = useState<InterviewResult>(null);
 
@@ -141,38 +143,62 @@ export default function RecruiterChatSection() {
     else startMic();
   };
 
-  const startMic = () => {
-    //@ts-ignore
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      alert("⚠ Your browser doesn't support speech recognition.\nUse Chrome.");
-      return;
-    }
-
-    const rec = new SpeechRecognition();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = "en-US";
-
-    rec.onresult = (e: any) => {
-      let transcript = "";
-      for (let i = 0; i < e.results.length; i++) {
-        transcript += e.results[i][0].transcript + " ";
+  const startMic = async () => {
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        alert("⚠ Audio recording is not supported in this browser.");
+        return;
       }
-      setInput(transcript.trim());
-    };
 
-    rec.onend = () => setListening(false);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
 
-    recognitionRef.current = rec;
-    rec.start();
-    setListening(true);
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+
+        try {
+          setLoading(true);
+          const result = await recruiterTranscribeAPI(audioBlob, "en");
+          const text = result.text?.trim();
+          if (text) {
+            setInput((prev) => (prev ? `${prev} ${text}` : text));
+          }
+        } catch (err) {
+          console.error("Whisper STT error:", err);
+          alert("Could not transcribe audio with local Whisper. Check backend model setup.");
+        } finally {
+          setLoading(false);
+          setListening(false);
+          mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
+          mediaStreamRef.current = null;
+        }
+      };
+
+      recorder.start();
+      setListening(true);
+    } catch (err) {
+      console.error("Mic start error:", err);
+      alert("Could not start microphone recording.");
+      setListening(false);
+    }
   };
 
   const stopMic = () => {
-    recognitionRef.current?.stop();
-    setListening(false);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    } else {
+      setListening(false);
+    }
   };
 
   return (
