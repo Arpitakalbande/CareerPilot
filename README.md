@@ -551,9 +551,5 @@ Contributions welcome! Please:
 
 ---
 
-## 📞 Support
 
-- **GitHub Issues:** https://github.com/Arpitbanait/Job-Preparation-Agent/issues
-- **Email:** support@jobpreparationai.com
-- **Discord:** (coming soon)
 
